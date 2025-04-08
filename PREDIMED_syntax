@@ -14,9 +14,8 @@ dat <- as_factor(dat, levels = "values")
 names(dat)<-tolower(names(dat))
 dat <- as.data.frame(dat)
 
-#Load PREDIMED data to compare populations
-
 # Variables that need rename 
+
 rename_vars <- c(
   cintura_01       = "cint1",
   cintura_03       = "cintura3",
@@ -190,11 +189,13 @@ already_removed <- c("70710002", "110104030", "140102090")
 genes <- genes %>%
   filter(!id %in% c(missing_gapdh, already_removed))
 
+# 4. Calculate gene expression through relative quantification (delta-delta-Ct method)
 # Calculate dCt Relative to GAPDH
-
+# We create a new df for section 5 
 genes <- genes %>%
   group_by(sample_name, time) %>%
   mutate(dCt_gapdh = Ct - Ct[gen == "gapdh"])
+genes1 <- genes # just section 5
 
 # ddCt: time 3 - time 1
 genes <- genes %>%
@@ -203,22 +204,243 @@ genes <- genes %>%
 
 # Reverse sign for fold change interpretation
 genes <- genes %>%
-  mutate(
-    ddCt_neg = -ddCt
-  )
+  mutate("-ddCt" = (-1)*(ddCt))
 
 # Calculate mean ddCt per gene and intervention group
 genes <- genes %>%
   group_by(gen, grup_int) %>%
   mutate(
-    ddCt_mean = mean(ddCt, na.rm = TRUE),
-    ddCt_mean_neg = -ddCt_mean
-  )
+    ddCt_mean = mean("-ddCt_mean" = (-1)*(ddCt_mean))
 
 # Calculate RQ = 2^-ddCt
 genes <- genes %>%
   mutate(
-    RQ_gapdh = 2^ddCt_mean_neg,
-    RQ_ind_gapdh = 2^ddCt_neg
-  ) %>%
+    RQ_gapdh = 2^(`-ddCt_mean`),
+    RQ_ind_gapdh = 2^(`-ddCt`)) %>%
   relocate(RQ_ind_gapdh, .after = ddCt_neg)
+
+# Round digits
+genes <- genes %>% mutate_if(is.numeric, round, digits= 3)
+
+
+5. Linear mixed-effects model
+
+lme_dat <- genes1 %>% pivot_wider(names_from = gen, values_from = dCt_gapdh)
+lme_dat$time [lme_dat$time == "1"] <- 1 
+lme_dat$time [lme_dat$time == "3"] <- 3 
+
+# Time points as numeric
+lme_dat$time<-as.numeric(lme_dat$time)
+
+# Relevel 
+lme_dat$grup_int <- as.factor(lme_dat$grup_int)
+
+# Combine groups 1 and 2 into a single group with the value 4 (both MedDiets)
+
+lme_dat$grup_int <- as.character(lme_dat$grup_int)
+lme_dat$grup_int[lme_dat$grup_int %in% c("1", "2")] <- "4" 
+lme_dat$grup_int <- as.factor(lme_dat$grup_int)
+
+# Names of variables
+genes.names <- colnames(lme_dat)[33:44]
+no.genes <- length(genes.names)
+
+# Create a named list to hold the fitted models
+# Remove the endogenous control we are using 
+
+gene.list <- as.list(1:no.genes)
+gene.list$gapdh <- NULL
+names(gene.list) <- genes.names
+
+# Loop over gene names
+for(i in genes.names){ 
+
+# print status
+  print(paste("Running entity:", i, "which is", which(genes.names==i), "out of", no.genes))
+  
+# trying to ignore variable because of few observations
+ if(i == "gapdh")next
+     print(i)
+  
+#1st: adjusting for time and group
+tmp <- lme_dat[, c(i,"grup_int","time", "id", "edad0", "sexo", "peso", "escolar1","fumas1", "alcoholg", "hta0", "dislip", "diabetes0","getota_1", "imc")]
+fml <- as.formula( paste( i, "~", paste(c("time:grup_int", "time", "grup_int", "edad0", "sexo", "getota_1", "fumas1", "dislip", "imc", "hta0", "diabetes0"), collapse = "+")))
+  
+# assign fit to list by name
+gene.list[[i]] <- lme(fml, random= ~ 1|id, control = lmeControl(opt = "optim"), method="REML", data=tmp, na.action = na.omit)
+}
+
+gene.list$gapdh <- NULL
+
+# List of data.frames/tibble
+result <- lapply(gene.list, function(x) tidy(x))
+
+# Extracting parameters of interest
+result2 <- dplyr::bind_rows(result, .id = "var") %>% dplyr::mutate_if(is.numeric, round, digits = 4)
+result2   <- result2 %>% dplyr::select(var, term, p.value)
+write.csv2(result2, "lme_adjusted.csv")
+
+# 6. Risk factors 
+
+# Categories
+1 = "Yes, frequently"
+2 = "Former smoker: 0 - 1 year"
+3 = "Former smoker: 1 - 5 years"
+4 = "Former smoker > 5 años"
+5 = "Ever smoker"
+9 = "Datos insuficientes"
+#####################
+# Load again the database
+fr <- read_sav("./predB50_A25.sav")
+
+#Keep participants whose transcriptomic profile was analyzed (no analytical troubles or NAs)
+dat1 <- unique(genes$id)
+dat2 <- unique(fr$id)
+rows_to_remove <- setdiff(union(dat1, dat2), intersect(dat1, dat2))
+fr <- fr[!fr$id %in% rows_to_remove, ]
+
+rm(list= c("rows_to_remove","dat1", "dat2"))
+
+# Risk factors: absolute frequencies 
+
+hta_tb <-table(fr$hta0, dnn = ("Hipertension"))
+diab_tb<-table(fr$diabetes0, dnn = ("Diabetes"))
+colest_tb<-table(fr$hipercol0, dnn = ("Dislipemia"))
+tabacos_tb<- table(fr$tabaco0, dnn = ("Fumador"))
+risk_f <- rbind(hta_tb, diab_tb, colest_tb, tabacos_tb)
+
+#write.csv2(risk_f, "Risk factors frequencies.csv")
+
+# Absolut frequencies per group
+hta_tb_grupo <- with(fr, table(hta0, grup_int))
+diab_tb_grupo <- with(fr, table(diabetes0, grup_int))
+colest_tb_grupo <- with(fr, table(hipercol0, grup_int))
+tabacos_tb_grupo <- with(dat, table(tabaco0, grup_int))
+
+
+# List of tables
+table_list <- list(hta = hta_tb_grupo, diab = diab_tb_grupo, colest = colest_tb_grupo, tab = tabacos_tb_grupo)
+
+
+# Table to dataframe
+lista_dataframes <- lapply(table_list, as.data.frame)
+
+# csv
+for (nombre_tabla in names(lista_dataframes)) {
+  write.csv(lista_dataframes[[nombre_tabla]], file = paste0(nombre_tabla, ".csv"))
+}
+
+# List of variable names. Fisher test and categorical comparison
+variable_names <- c("hta", "diab", "colest", "tab")
+
+# Initialize a list to store the p-values
+p_values_list <- list()
+
+
+# Loop through the list of tables
+for (i in 1:length(table_list)) {
+  # Extract the table data
+  table_data <- table_list[[i]]
+  
+  # Apply Fisher's Exact Test directly to the table
+  fisher_result <- fisher.test(table_data)
+  
+  # Extract the p-value from the result
+  p_value <- fisher_result$p.value
+  
+  # Store the p-value in the list
+  p_values_list[[i]] <- p_value
+}
+
+# Create a table with the p-values and corresponding variable names
+result_df <- data.frame(Variable = variable_names, P_Value = unlist(p_values_list))
+
+
+
+# 7. Divergent bar plots 
+
+# Gene expression
+
+# Converting gen and Color in factor category
+df_plot <- genes %>% dplyr::group_by(gen, grup_int) %>% dplyr::select(gen, grup_int, time, RQ_gapdh) %>% dplyr::filter(time==3) %>% unique()
+df_plot$gen <- as.factor(df_plot$gen)
+
+# nesting for just keeping 55 genes and mean of RQ values
+df_plot$gen <- toupper(df_plot$gen)
+df_plot2 <- df_plot %>% dplyr::group_by(gen, RQ_gapdh, grup_int) %>% nest()
+
+# setting the cutoff for RQ value
+df_plot2 <- df_plot %>% dplyr::mutate(Color = ifelse(RQ_gapdh > 1, "TRUE", "FALSE"))
+
+#filter out the endogenous genes & mttp & pcsk9
+df_plot2 <- df_plot2 %>% dplyr::filter(!gen %in% c("b2m","gapdh", "s18", "mttp", "pcsk9"))
+                              
+# Converting 'gen' and 'Color' in factor category and order them
+df_plot2$Color <- as.factor(df_plot2$Color)
+df_plot2 <- df_plot2 %>% dplyr::filter(gen %in% c('CD86', 'CDKN2A', 'IFNG', 'IL10', 'IL1B', 'NAMPT', 'NFE2L2', 'NLRP3', 'PIK3CB', 'TGFB2'))
+genes_order <- c('CD86', 'CDKN2A', 'IFNG', 'IL10', 'IL1B', 'NAMPT', 'NFE2L2', 'NLRP3', 'PIK3CB', 'TGFB2')
+
+# Reverse the order
+genes_order_reversed <- rev(genes_order)
+
+df_plot2$gen <- as.factor(df_plot2$gen)
+df_plot2 <- as.data.frame(df_plot2)
+df_plot2 <- df_plot2[order(df_plot2$gen), ]
+
+df_plot2$gen <- factor(df_plot2$gen, levels = genes_order_reversed )
+
+# Method using afterscale to set the beginning in value = 1 - Basal plot, getting the fold change per gene, ignoring the grup_int
+
+df_plot3 <- df_plot2 |>
+  dplyr::mutate(
+    label = dplyr::case_when(
+      gen %in% c("CDKN2A", "IFNG", "NLRP3", "PIK3CB") & grup_int == "1" ~ "+",
+      gen %in% c("TGFB2") & grup_int == "1" ~ "+*",
+      gen %in% c("TGFB2") & grup_int == "2" ~ "+",
+      gen %in% c("NAMPT") & grup_int == "3" ~ "+",
+      gen %in% c("NAMPT") & grup_int == "2" ~ "*#",
+      gen %in% c("IL1B") & grup_int == "2" ~ "*#",
+      .default = ""
+    ),
+    hjust = dplyr::if_else(RQ_gapdh > 1, 0, 1)
+  )
+
+# Make the plot
+
+p4 <- ggplot(data = df_plot3, aes(
+  x = RQ_gapdh,      # X-axis: Fold change (relative quantification)
+  y = gen,           # Y-axis: Gene names
+  xmin = after_scale(1),  # Used for aesthetics adjustment (not strictly needed here)
+  fill = Color        # Fill bars by color group (e.g., up/down regulation)
+)) +
+  geom_col(width = .5) +   # Bar plot with thinner bars
+  geom_label(              # Add labels inside the bars
+    aes(label = label, hjust = hjust),
+    size = 5, label.size = 0, fill = NA
+  ) +
+  scale_fill_manual(values = c("lightseagreen", "orange2")) +  # Manual fill colors
+  labs(
+    y = "Genes",
+    x = expression(2^{-Delta * Delta * Ct}),  # x-axis expression for fold change
+    title = "Gene expression",
+    subtitles = "1 year post-intervention"    # Typo: should be `subtitle`
+  ) +
+  guides(fill = "none") +   # Remove fill legend
+  facet_wrap(~grup_int,     # Split into panels by intervention group
+    labeller = labeller(
+      grup_int = c(
+        "1" = "Olive oil",
+        "2" = "Nuts",
+        "3" = "Low-fat diet"
+      )
+    )
+  ) +
+  theme_solarized(base_size = 14) +   # Use solarized theme
+  theme(axis.text.y = element_text(   # Make y-axis gene names italic serif
+    face = "italic", family = "serif"
+  )) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "black") +  # Reference line at 1
+  scale_x_continuous(              # Set x-axis limits and breaks
+    limits = c(0.75, 1.4),
+    breaks = c(0.75, 1, 1.4)
+  )
