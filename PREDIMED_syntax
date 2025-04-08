@@ -1,0 +1,131 @@
+
+# 1. Install packages
+
+library(haven)
+library(broom)
+library(tidyverse)
+library(nlme)
+library(writexl)
+library(ggthemes)
+
+# 2. Load Data & Edit: Rename, Units conversion, Percentage, Removing rows
+dat <- read_sav("./predB50_A25.sav")
+dat <- as_factor(dat, levels = "values")
+names(dat)<-tolower(names(dat))
+dat <- as.data.frame(dat)
+
+#Load PREDIMED data to compare populations
+
+# Variables that need rename 
+rename_vars <- c(
+  cintura_01       = "cint1",
+  cintura_03       = "cintura3",
+  peso_01          = "peso1",
+  peso_03          = "peso3",
+  imc_01           = "imc1",
+  imc_03           = "imc3",
+  hba1c_01         = "hba1c1",
+  hba1c_03         = "hba1c3",
+  crt_s18_01       = "crt_18s_01",
+  crt_s18_03       = "crt_18s_03",
+  crt_gapdh_01     = "crt_gapd_01",
+  crt_gapdh_03     = "crt_gapd_03",
+  ldl_01           = "ldl1",
+  ldl_03           = "ldl3",
+  placa_gapdh_01   = "placa_gapd_01",
+  placa_gapdh_03   = "placa_gapd_03"
+)
+
+# Apply rename in one go
+dat <- dat %>% dplyr::rename(!!!rename_vars)
+
+# Creating physical activity per week and cholesterol intake in g/day (/1000))
+
+dat <- dat %>% dplyr::mutate(getotawk_01 = getota_1*7,getotawk_03 = getota_3*7)
+attr(dat$getotawk_01, "label") <- "AF VISITA 1: Actividad física total (último año) METs.min/semana"
+attr(dat$getotawk_03, "label") <- "AF VISITA 3: Actividad física total (último año) METs.min/semana"
+
+#  From mg/day to g/day
+
+dat$colest <- dat$colest / 1000
+dat$colest3 <- dat$colest3 / 1000
+
+# Removing 9999.0 (intern code for analyzer sampling error or missing value resulted from pre- or analyticla standpoint)
+
+dat$hba1c_01[dat$hba1c_01 == 9999.0] <- NA
+dat$hba1c_03[dat$hba1c_03 == 9999.0] <- NA
+
+# Loop through the variables and create percentage variables in fat types
+
+variables <- c("mo", "po", "sa", "colest")
+
+for (var in variables) {
+  # Create a new variable by dividing 'var' by 'gratot' and multiplying by 100
+  dat[[paste0(var, "_percent")]] <- (dat[[var]] / dat$gratot) * 100    
+}
+
+
+# Loop through the variables and create percentage variables in fat types
+variables <- c("mo3", "po3", "sa3", "colest3")
+
+for (var in variables) {
+  # Create a new variable by dividing 'var' by 'gratot3' and multiplying by 100
+  dat[[paste0(var, "_percent")]] <- (dat[[var]] / dat$gratot3) * 100
+}
+
+
+# Loop through the variables and calculate the differences in fat types
+variables <- c("mo", "po", "sa", "colest")
+
+for (var in variables) {
+  # Create new variable names for the differences
+  diff_var_name <- paste0("d_", var, "_percent")
+  
+  # Calculate the differences
+  dat[[diff_var_name]] <- dat[[paste0(var, "3_percent")]] - dat[[paste0(var, "_percent")]]
+}
+
+
+# Calculating differences in anthropometric measurements
+
+var <- c("peso",
+         "cintura",
+         "imc")
+
+
+for (v in var){
+  
+  temp<-dat[ , paste0(v, "_03")]-dat[ , paste0(v, "_01")] 
+  vs <- paste0("d_", v)
+  dat[ , vs] <- temp
+  
+}
+
+#Cleaning environment
+rm(list = c("temp","v", "vs", "var", "vars", "variables", "variables_3", "gratot_var", "var_percent", "group", "groups", "var_diff", "var3", "vars_to_diff", "group_data", "variables_continuas", "ids_to_filter"))
+
+
+# Diet variables 
+
+variables_adicionales <- c("ac_girasol", "ac_olivavir", "alcoholg", "carnicos","cereales_sinpatata", "colest", "energiat", "fibra","fit", "frutatot", "fsecos", "gratot", "hc","lacteos", "legumbre", "linolenico", "mo","n3marinos", "olivatot", "pescados", "po", "prot","sa", "verdutot", "ac_girasol3", "ac_olivavir3","alcoholg3", "carnicos3", "cereales_sinpatata3","colest3", "energiat3", "fibra3", "fit3", "frutatot3","fsecos3", "gratot3", "hc3", "lacteos3", "legumbre3","linolenico3", "mo3", "n3marinos3", "olivatot3","pescados3", "po3", "prot3", "sa3", "verdutot3")
+
+# Identifying values ==  9999.0 in other variables of interest
+variables_con_9999 <- sapply(variables_adicionales, function(variable) {
+  any(dat[, variable] == 9999.0, na.rm = TRUE)
+})
+
+# Mostrar las variables con valores como 9999.0 
+print(variables_adicionales[variables_con_9999])
+
+rm(list = c("variables_con_9999", "variables_adicionales"))
+
+
+# Covariates: education level, dyslipidaemia in base of lipid profile
+
+dat$escolar1<-with(dat,ifelse(escolar1==1,3,ifelse(escolar1==2,3,ifelse(escolar1==3,2,ifelse(escolar1==4,1,ifelse(escolar1==5,1,ifelse(escolar1==9,9,ifelse(is.na(escolar1),9,NA))))))))
+dat$escolar1<-with(dat,ifelse(escolar1==9,NA,escolar1))
+attr(dat$escolar1, "value.labels")<-c("Ed. primaria o inferior"=1, "Ed. secundaria/bachiller"=2, "Ed.superior"=3)
+
+# Dyslipidaemia
+dat <- dat %>% dplyr::mutate(dislip = ifelse((sexo == 0 & ca_hdl_1 < 40) | (sexo == 1 & ca_hdl_1 < 50) | ldl_01 > 200 | ca_tg_1 > 150 | m_otrohipoli1 == 1,1, 0))
+
