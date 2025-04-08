@@ -129,3 +129,96 @@ attr(dat$escolar1, "value.labels")<-c("Ed. primaria o inferior"=1, "Ed. secundar
 # Dyslipidaemia
 dat <- dat %>% dplyr::mutate(dislip = ifelse((sexo == 0 & ca_hdl_1 < 40) | (sexo == 1 & ca_hdl_1 < 50) | ldl_01 > 200 | ca_tg_1 > 150 | m_otrohipoli1 == 1,1, 0))
 
+# 3. Select Relevant Variables (genes and covariates of interest) and Rename them
+
+genes <- dat %>%
+  select(
+    id, sample_name, experiment_name, nodo, sexo, edad0, grup_int,
+    p14totm_1, terciles, escolar1, getota_1, alcoholg, hta0, lugarnac1,
+    fumas1, proceden0, diabetes0, est_civi1, dislip,
+    peso_01, peso_03, d_peso,
+    cintura_01, cintura_03, d_cintura,
+    imc_01, imc_03, d_imc,
+    # Select CRT genes, excluding those with "placa" in the name
+    all_of(grep("^crt_", colnames(dat), value = TRUE)[!grepl("placa", grep("^crt_", colnames(dat), value = TRUE))])
+  ) %>%
+  # Exclude genes not used in analysis (analytic troubles)
+  select(
+    -c(crt_abcg4_01, crt_abcg4_03, crt_mttp_01, crt_mttp_03, crt_pcsk9_01, crt_pcsk9_03)
+  )
+
+# Pivot into long format and extract time information
+
+genes <- genes %>%
+  pivot_longer(
+    cols = -c(
+      id, sexo, edad0, sample_name, grup_int, experiment_name, nodo,
+      escolar1, getota_1, lugarnac1, proceden0, fumas1,
+      p14totm_1, terciles, hta0, diabetes0, alcoholg, dislip,
+      est_civi1, d_peso, d_cintura, d_imc
+    ),
+    names_pattern = "(.*)_0*([0-9]+)$",
+    names_to = c(".value", "time")
+  ) %>%
+  pivot_longer(
+    cols = starts_with("crt_"),
+    names_to = "gen",
+    values_to = "Ct"
+  ) %>%
+  mutate(
+    gen = str_remove(gen, pattern = "^crt_")
+  ) %>%
+  as.data.frame()
+
+# Filter by Gene and Remove NA in Reference Gene
+
+neuro_genes <- c("cd86", "cdkn2a", "ido", "ifng", "il10", "lag3",
+                 "nampt", "nfe2l2", "pik3cb", "tgfb2", "nlrp3",
+                 "nlrp1", "gapdh")
+
+genes <- genes %>%
+  filter(gen %in% neuro_genes)
+
+# Identify and remove subjects with missing GAPDH (reference gene)
+missing_gapdh <- genes %>%
+  filter(is.na(Ct) & gen == "gapdh") %>%
+  pull(id) %>%
+  unique()
+
+already_removed <- c("70710002", "110104030", "140102090")
+
+genes <- genes %>%
+  filter(!id %in% c(missing_gapdh, already_removed))
+
+# Calculate dCt Relative to GAPDH
+
+genes <- genes %>%
+  group_by(sample_name, time) %>%
+  mutate(dCt_gapdh = Ct - Ct[gen == "gapdh"])
+
+# ddCt: time 3 - time 1
+genes <- genes %>%
+  group_by(id, gen) %>%
+  mutate(ddCt = dCt_gapdh[time == 3] - dCt_gapdh[time == 1])
+
+# Reverse sign for fold change interpretation
+genes <- genes %>%
+  mutate(
+    ddCt_neg = -ddCt
+  )
+
+# Calculate mean ddCt per gene and intervention group
+genes <- genes %>%
+  group_by(gen, grup_int) %>%
+  mutate(
+    ddCt_mean = mean(ddCt, na.rm = TRUE),
+    ddCt_mean_neg = -ddCt_mean
+  )
+
+# Calculate RQ = 2^-ddCt
+genes <- genes %>%
+  mutate(
+    RQ_gapdh = 2^ddCt_mean_neg,
+    RQ_ind_gapdh = 2^ddCt_neg
+  ) %>%
+  relocate(RQ_ind_gapdh, .after = ddCt_neg)
