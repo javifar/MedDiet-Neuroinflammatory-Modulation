@@ -222,6 +222,159 @@ genes <- genes %>%
 # Round digits
 genes <- genes %>% mutate_if(is.numeric, round, digits= 3)
 
+5. Within-group comparison (t.test at baseline vs 12-month follow-up)
+
+# Select relevant columns and reshape to wide format
+genes_wide_gapdh <- genes %>%
+  dplyr::select(id, grup_int, gen, time, dCt_gapdh) %>%
+  pivot_wider(
+    names_from = c(gen, time),
+    values_from = dCt_gapdh
+  ) %>%
+  mutate_if(is.numeric, round, digits = 3) %>%
+  as.data.frame()
+
+# Define Gene List and Timepoints
+
+# Genes to analyze (excluding gapdh)
+rowvars <- c("cd86", "cdkn2a", "ifng", "il10", "nampt", "nfe2l2", "pik3cb", "tgfb2", "nlrp3")
+rowvars <- sort(rowvars)
+
+# Suffixes used in wide format for timepoints
+time <- c("_1", "_3")
+
+# Loop: Paired t-tests by Group and Gene
+
+tab <- NA  # initialize results table
+
+for (i in seq_along(rowvars)) {
+  # Get variable names for baseline and 12 months
+  v <- paste0(rowvars[i], time)
+  
+  # Paired t-tests for each intervention group
+  CI1 <- round(t.test(
+    x = subset(genes_wide_gapdh, grup_int == "1")[, v[1]],
+    y = subset(genes_wide_gapdh, grup_int == "1")[, v[2]],
+    paired = TRUE
+  )$conf.int, 4)
+
+  CI2 <- round(t.test(
+    x = subset(genes_wide_gapdh, grup_int == "2")[, v[1]],
+    y = subset(genes_wide_gapdh, grup_int == "2")[, v[2]],
+    paired = TRUE
+  )$conf.int, 4)
+
+  CI3 <- round(t.test(
+    x = subset(genes_wide_gapdh, grup_int == "3")[, v[1]],
+    y = subset(genes_wide_gapdh, grup_int == "3")[, v[2]],
+    paired = TRUE
+  )$conf.int, 4)
+
+  # Format confidence intervals
+  formatted_CI1 <- paste0("(", CI1[1], " - ", CI1[2], ")")
+  formatted_CI2 <- paste0("(", CI2[1], " - ", CI2[2], ")")
+  formatted_CI3 <- paste0("(", CI3[1], " - ", CI3[2], ")")
+
+  # Append row to results table
+  new_row <- cbind(formatted_CI1, formatted_CI2, formatted_CI3)
+  tab <- rbind(tab, new_row)
+}
+
+
+# Remove initial NA row
+tab <- tab[-1, ]
+
+# Assign row and column names
+rownames(tab) <- rowvars
+colnames(tab) <- c("OO", "NUTS", "LFD")  # Olive Oil, Nuts, Low-Fat Diet
+
+# Convert to data frame and add gene column
+t.test_time_comp <- as.data.frame(tab)
+t.test_time_comp <- tibble::rownames_to_column(t.test_time_comp, var = "gen")
+
+
+6. Between-group comparison
+
+# Prepare Data: Pivot to Wide Format
+
+# Pivot -ddCt values into wide format by gene and group, filtering time = 3 (post-intervention)
+genes_wide_gapdh <- genes %>%
+  select(id, grup_int, gen, time, `-ddCt`) %>%
+  pivot_wider(
+    names_from = c(gen, grup_int),
+    values_from = `-ddCt`
+  ) %>%
+  filter(time == 3) %>%
+  as.data.frame()
+
+# Define Genes and Group Codes
+
+
+# Genes of interest (excluding GAPDH)
+rowvars <- c("cd86", "cdkn2a", "ifng", "il10", "nampt", "nfe2l2", "pik3cb", "tgfb2", "nlrp3")
+rowvars <- sort(rowvars)
+
+# Group suffixes as used in wide column names
+grup <- c("_1", "_2", "_3")  # 1 = Olive oil, 2 = Nuts, 3 = Low-fat diet
+
+# Loop: t-tests Between Groups
+
+tab <- NA  # initialize result table
+
+for (i in seq_along(rowvars)) {
+  
+  # Build column names for this gene in each group
+  vs <- paste0(rowvars[i], grup)
+  
+  # Comparison: OO+Nuts (groups 1+2) vs LFD (group 3)
+  CI1 <- round(
+    t.test(
+      x = rowMeans(genes_wide_gapdh[, vs[1:2]], na.rm = TRUE),
+      y = genes_wide_gapdh[, vs[3]],
+      paired = FALSE
+    )$conf.int,
+    3
+  )
+  
+  # Comparison: OO vs LFD
+  CI2 <- round(
+    t.test(genes_wide_gapdh[, vs[1]], genes_wide_gapdh[, vs[3]], paired = FALSE)$conf.int,
+    3
+  )
+  
+  # Comparison: Nuts vs LFD
+  CI3 <- round(
+    t.test(genes_wide_gapdh[, vs[2]], genes_wide_gapdh[, vs[3]], paired = FALSE)$conf.int,
+    3
+  )
+  
+  # Format confidence intervals
+  formatted_CI1 <- paste0("(", CI1[1], " - ", CI1[2], ")")
+  formatted_CI2 <- paste0("(", CI2[1], " - ", CI2[2], ")")
+  formatted_CI3 <- paste0("(", CI3[1], " - ", CI3[2], ")")
+  
+  # Create and append new row
+  new_row <- cbind(formatted_CI1, formatted_CI2, formatted_CI3)
+  tab <- rbind(tab, new_row)
+}
+
+# Final Formatting of Results Table
+
+# Remove first NA row
+tab <- tab[-1, ]
+
+# Assign row and column names
+rownames(tab) <- rowvars
+colnames(tab) <- c("OO+NUTS vs LFD", "OO vs LFD", "NUTS vs LFD")
+
+# Convert to data frame and add gene names as a column
+t.test_comparison <- as.data.frame(tab)
+t.test_comparison <- tibble::rownames_to_column(t.test_comparison, var = "gen")
+
+# Export to CSV
+
+write.csv2(t.test_comparison, "t.test_dCt_gapdh_grup.csv", row.names = FALSE)
+
 
 5. Linear mixed-effects model
 
@@ -281,8 +434,8 @@ result2   <- result2 %>% dplyr::select(var, term, p.value)
 write.csv2(result2, "lme_adjusted.csv")
 
 # 6. Risk factors 
-
 # Categories
+
 1 = "Yes, frequently"
 2 = "Former smoker: 0 - 1 year"
 3 = "Former smoker: 1 - 5 years"
@@ -291,6 +444,7 @@ write.csv2(result2, "lme_adjusted.csv")
 9 = "Datos insuficientes"
 #####################
 # Load again the database
+
 fr <- read_sav("./predB50_A25.sav")
 
 #Keep participants whose transcriptomic profile was analyzed (no analytical troubles or NAs)
@@ -311,7 +465,7 @@ risk_f <- rbind(hta_tb, diab_tb, colest_tb, tabacos_tb)
 
 #write.csv2(risk_f, "Risk factors frequencies.csv")
 
-# Absolut frequencies per group
+# Absolute frequencies per group
 hta_tb_grupo <- with(fr, table(hta0, grup_int))
 diab_tb_grupo <- with(fr, table(diabetes0, grup_int))
 colest_tb_grupo <- with(fr, table(hipercol0, grup_int))
@@ -355,13 +509,10 @@ for (i in 1:length(table_list)) {
 # Create a table with the p-values and corresponding variable names
 result_df <- data.frame(Variable = variable_names, P_Value = unlist(p_values_list))
 
-
-
 # 7. Divergent bar plots 
-
 # Gene expression
-
 # Converting gen and Color in factor category
+
 df_plot <- genes %>% dplyr::group_by(gen, grup_int) %>% dplyr::select(gen, grup_int, time, RQ_gapdh) %>% dplyr::filter(time==3) %>% unique()
 df_plot$gen <- as.factor(df_plot$gen)
 
@@ -444,3 +595,121 @@ p4 <- ggplot(data = df_plot3, aes(
     limits = c(0.75, 1.4),
     breaks = c(0.75, 1, 1.4)
   )
+
+
+8. Comparison to the whole PREDIMED trial
+
+# Load and Prepare General PREDIMED Data
+load("./pred_.Rdata") #general population file
+
+# Weekly total physical activity
+pred <- pred %>%
+  mutate(getotawk_01 = getota_1 * 7)
+
+attr(pred$getotawk_01, "label") <- "AF VISIT 1: Total physical activity (last year), METs.min/week"
+
+# Exclude subjects already in our cohort
+pred <- pred[!(pred$id %in% unique(dat$id)), ]
+
+# Define dyslipidemia in general population
+pred <- pred %>%
+  mutate(dislip = ifelse(
+    (sexo == 0 & hdl1 < 40) | (sexo == 1 & hdl1 < 50) | ldl1 > 200 | tg1 > 150 | m_otrohipoli1 == 1,
+    1, 0
+  ))
+
+# Select and organize columns
+stats_pred <- pred %>%
+  select(-id, -getots_1, -getota_1, -p14tot_1)
+
+# Column order
+names_order <- c("sexo", "edad0", "peso1", "imc1", "cint1", "hta0", "diabetes0", "tabaco0",
+                 "col1", "hdl1", "ldl1", "tg1", "dislip", "glu1", "p14totm_1", "getotawk_01")
+
+# Recode smoking variable
+smoke_levels <- c(1, 2, 3, 4, 5, 9)
+smoke_labels <- c("Current smoker", "Former smoker", "Former smoker", "Former smoker", "Never smoker", "Unknown")
+stats_pred$tabaco0 <- factor(stats_pred$tabaco0, levels = smoke_levels, labels = smoke_labels)
+
+# Reorder columns and convert to factor where needed
+stats_pred <- stats_pred[, names_order]
+stats_pred <- stats_pred %>%
+  mutate(
+    sexo = factor(sexo),
+    diabetes0 = factor(diabetes0),
+    hta0 = factor(hta0),
+    dislip = factor(dislip)
+  )
+
+# Prepare Your Population Data (dat)
+
+stats_dat <- dat %>%
+  select(
+    sexo, edad0, hta0, diabetes0, tabaco0, peso_01, cintura_01, imc_01,
+    ca_col_1, ca_hdl_1, ldl_01, ca_tg_1, ca_gluco_1, dislip,
+    p14totm_1, getotawk_01
+  ) %>%
+  rename(
+    col1 = ca_col_1,
+    hdl1 = ca_hdl_1,
+    ldl1 = ldl_01,
+    tg1 = ca_tg_1,
+    glu1 = ca_gluco_1,
+    peso1 = peso_01,
+    cint1 = cintura_01,
+    imc1 = imc_01
+  )
+
+# Apply same format as general dataset
+stats_dat$tabaco0 <- factor(stats_dat$tabaco0, levels = smoke_levels, labels = smoke_labels)
+
+stats_dat <- stats_dat[, names_order]
+stats_dat <- stats_dat %>%
+  mutate(
+    sexo = factor(sexo),
+    diabetes0 = factor(diabetes0),
+    hta0 = factor(hta0),
+    dislip = factor(dislip)
+  )
+
+# Merge Both Populations for Comparison
+
+
+stats_dat$fuente <- 1     # Your cohort
+stats_pred$fuente <- 2    # General population
+
+datos_combinados <- bind_rows(stats_dat, stats_pred)
+
+# Run Descriptive Comparison with compareGroups
+
+
+library(compareGroups)
+
+# Run comparison grouped by source (fuente)
+table <- compareGroups(
+  fuente ~ ., 
+  data = datos_combinados,
+  method = c(
+    tg1 = 2,           # continuous
+    sexo = 3,          # categorical
+    diabetes0 = 3,
+    hta0 = 3,
+    tabaco0 = 3
+  )
+)
+
+# Create clean summary table, hiding "sexo = 0"
+table2 <- createTable(
+  table,
+  show.n = TRUE,
+  type = 2,
+  sd.type = 1,
+  hide = c(sexo = "0"),
+  show.ci = TRUE
+)
+
+# Export to Excel
+#export2xls(table2, file = "tablex.xlsx")
+
+
+
