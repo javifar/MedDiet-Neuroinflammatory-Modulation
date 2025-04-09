@@ -7,8 +7,10 @@ library(tidyverse)
 library(nlme)
 library(writexl)
 library(ggthemes)
+library(compareGroups)
 
 # 2. Load Data & Edit: Rename, Units conversion, Percentage, Removing rows
+
 dat <- read_sav("./predB50_A25.sav")
 dat <- as_factor(dat, levels = "values")
 names(dat)<-tolower(names(dat))
@@ -36,6 +38,7 @@ rename_vars <- c(
 )
 
 # Apply rename in one go
+
 dat <- dat %>% dplyr::rename(!!!rename_vars)
 
 # Creating physical activity per week and cholesterol intake in g/day (/1000))
@@ -117,7 +120,6 @@ variables_con_9999 <- sapply(variables_adicionales, function(variable) {
 print(variables_adicionales[variables_con_9999])
 
 rm(list = c("variables_con_9999", "variables_adicionales"))
-
 
 # Covariates: education level, dyslipidaemia in base of lipid profile
 
@@ -598,7 +600,6 @@ load("./pred_.Rdata") #general population file
 # Weekly total physical activity
 pred <- pred %>%
   mutate(getotawk_01 = getota_1 * 7)
-
 attr(pred$getotawk_01, "label") <- "AF VISIT 1: Total physical activity (last year), METs.min/week"
 
 # Exclude subjects already in our cohort
@@ -667,16 +668,9 @@ stats_dat <- stats_dat %>%
 
 # Merge Both Populations for Comparison
 
-
 stats_dat$fuente <- 1     # Your cohort
 stats_pred$fuente <- 2    # General population
-
 datos_combinados <- bind_rows(stats_dat, stats_pred)
-
-# Run Descriptive Comparison with compareGroups
-
-
-library(compareGroups)
 
 # Run comparison grouped by source (fuente)
 table <- compareGroups(
