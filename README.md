@@ -1,4 +1,4 @@
-# 🧬 Mediterranean Diet & Neuroinflammation Gene Expression (PREDIMED & PPLUS Substudy)
+# 🧬 Mediterranean Diet & Neuroinflammation Gene Expression (PREDIMED Substudy)
 
 This repository contains R scripts and supplementary materials related to the data preprocessing and analysis of the study:
 
