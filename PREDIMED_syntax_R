@@ -222,7 +222,7 @@ genes <- genes %>%
 # Round digits
 genes <- genes %>% mutate_if(is.numeric, round, digits= 3)
 
-5. Within-group comparison (t.test at baseline vs 12-month follow-up)
+5. Within-group comparison (t.test at baseline vs 12-month follow-up). We compare dCt values.
 
 # Select relevant columns and reshape to wide format
 genes_wide_gapdh <- genes %>%
@@ -293,7 +293,7 @@ t.test_time_comp <- as.data.frame(tab)
 t.test_time_comp <- tibble::rownames_to_column(t.test_time_comp, var = "gen")
 
 
-6. Between-group comparison
+6. Between-group comparison. We compare -ddCt values.
 
 # Prepare Data: Pivot to Wide Format
 
@@ -371,11 +371,6 @@ colnames(tab) <- c("OO+NUTS vs LFD", "OO vs LFD", "NUTS vs LFD")
 t.test_comparison <- as.data.frame(tab)
 t.test_comparison <- tibble::rownames_to_column(t.test_comparison, var = "gen")
 
-# Export to CSV
-
-write.csv2(t.test_comparison, "t.test_dCt_gapdh_grup.csv", row.names = FALSE)
-
-
 5. Linear mixed-effects model
 
 lme_dat <- genes1 %>% pivot_wider(names_from = gen, values_from = dCt_gapdh)
@@ -431,7 +426,6 @@ result <- lapply(gene.list, function(x) tidy(x))
 # Extracting parameters of interest
 result2 <- dplyr::bind_rows(result, .id = "var") %>% dplyr::mutate_if(is.numeric, round, digits = 4)
 result2   <- result2 %>% dplyr::select(var, term, p.value)
-write.csv2(result2, "lme_adjusted.csv")
 
 # 6. Risk factors 
 # Categories
@@ -463,7 +457,6 @@ colest_tb<-table(fr$hipercol0, dnn = ("Dislipemia"))
 tabacos_tb<- table(fr$tabaco0, dnn = ("Fumador"))
 risk_f <- rbind(hta_tb, diab_tb, colest_tb, tabacos_tb)
 
-#write.csv2(risk_f, "Risk factors frequencies.csv")
 
 # Absolute frequencies per group
 hta_tb_grupo <- with(fr, table(hta0, grup_int))
